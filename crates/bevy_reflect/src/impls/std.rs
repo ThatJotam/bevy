@@ -25,6 +25,10 @@ use std::{
     ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
     path::{Path, PathBuf},
 };
+use winit::event::DeviceId;
+
+impl_reflect_value!(DeviceId(Debug, Hash, PartialEq));
+impl_from_reflect_value!(DeviceId);
 
 impl_reflect_value!(bool(
     Debug,

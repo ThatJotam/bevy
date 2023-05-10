@@ -2,6 +2,7 @@ use crate::{ButtonState, Input};
 use bevy_ecs::{change_detection::DetectChangesMut, event::EventReader, system::ResMut};
 use bevy_math::Vec2;
 use bevy_reflect::{FromReflect, Reflect};
+use winit::event::DeviceId;
 
 #[cfg(feature = "serialize")]
 use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
@@ -26,6 +27,8 @@ pub struct MouseButtonInput {
     pub button: MouseButton,
     /// The pressed state of the button.
     pub state: ButtonState,
+
+    pub device_id: DeviceId,
 }
 
 /// A button on a mouse device.
@@ -75,6 +78,8 @@ pub enum MouseButton {
 pub struct MouseMotion {
     /// The change in the position of the pointing device since the last event was sent.
     pub delta: Vec2,
+
+    pub device_id: DeviceId,
 }
 
 /// The scroll unit.

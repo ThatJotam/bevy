@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use bevy_ecs::entity::Entity;
 use bevy_math::{IVec2, Vec2};
 use bevy_reflect::{FromReflect, Reflect};
+use winit::event::DeviceId;
 
 #[cfg(feature = "serialize")]
 use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
@@ -110,6 +111,8 @@ pub struct CursorMoved {
     pub window: Entity,
     /// The cursor position in logical pixels.
     pub position: Vec2,
+
+    pub device_id: DeviceId,
 }
 
 /// An event that is sent whenever the user's cursor enters a window.

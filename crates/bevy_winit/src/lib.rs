@@ -421,7 +421,11 @@ pub fn winit_runner(mut app: App) {
                             .keyboard_input
                             .send(converters::convert_keyboard_input(input));
                     }
-                    WindowEvent::CursorMoved { position, .. } => {
+                    WindowEvent::CursorMoved {
+                        position,
+                        device_id,
+                        ..
+                    } => {
                         let physical_position = DVec2::new(
                             position.x,
                             // Flip the coordinate space from winit's context to our context.
@@ -434,6 +438,7 @@ pub fn winit_runner(mut app: App) {
                             window: window_entity,
                             position: (physical_position / window.resolution.scale_factor())
                                 .as_vec2(),
+                            device_id,
                         });
                     }
                     WindowEvent::CursorEntered { .. } => {
@@ -448,10 +453,16 @@ pub fn winit_runner(mut app: App) {
                             window: window_entity,
                         });
                     }
-                    WindowEvent::MouseInput { state, button, .. } => {
+                    WindowEvent::MouseInput {
+                        state,
+                        button,
+                        device_id,
+                        ..
+                    } => {
                         input_events.mouse_button_input.send(MouseButtonInput {
                             button: converters::convert_mouse_button(button),
                             state: converters::convert_element_state(state),
+                            device_id,
                         });
                     }
                     WindowEvent::MouseWheel { delta, .. } => match delta {
@@ -597,6 +608,7 @@ pub fn winit_runner(mut app: App) {
             }
             event::Event::DeviceEvent {
                 event: DeviceEvent::MouseMotion { delta: (x, y) },
+                device_id,
                 ..
             } => {
                 let mut system_state: SystemState<EventWriter<MouseMotion>> =
@@ -605,6 +617,7 @@ pub fn winit_runner(mut app: App) {
 
                 mouse_motion.send(MouseMotion {
                     delta: Vec2::new(x as f32, y as f32),
+                    device_id,
                 });
             }
             event::Event::Suspended => {

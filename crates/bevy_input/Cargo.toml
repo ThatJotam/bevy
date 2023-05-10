@@ -23,6 +23,7 @@ bevy_reflect = { path = "../bevy_reflect", version = "0.10.1", features = ["glam
 # other
 serde = { version = "1", features = ["derive"], optional = true }
 thiserror = "1.0"
+winit = { version = "0.28", default-features = false }
 
 [dev-dependencies]
 bevy = { path = "../../", version = "0.10.1" }
