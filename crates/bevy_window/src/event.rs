@@ -7,6 +7,7 @@ use bevy_reflect::Reflect;
 
 #[cfg(feature = "serialize")]
 use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
+use winit::event::DeviceId;
 
 use crate::WindowTheme;
 

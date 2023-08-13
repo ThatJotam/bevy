@@ -10,6 +10,7 @@ use bevy_reflect::Reflect;
 
 #[cfg(feature = "serialize")]
 use bevy_reflect::{ReflectDeserialize, ReflectSerialize};
+use winit::event::DeviceId;
 
 /// A mouse button input event.
 ///
@@ -33,6 +34,8 @@ pub struct MouseButtonInput {
     pub state: ButtonState,
     /// Window that received the input.
     pub window: Entity,
+
+    pub device_id: DeviceId,
 }
 
 /// A button on a mouse device.

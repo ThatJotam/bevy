@@ -20,10 +20,8 @@ use std::{
     hash::{BuildHasher, Hash, Hasher},
     path::Path,
 };
-use winit::event::DeviceId;
 
-impl_reflect_value!(DeviceId(Debug, Hash, PartialEq));
-impl_from_reflect_value!(DeviceId);
+impl_reflect_value!(::winit::event::DeviceId(Debug, Hash, PartialEq));
 
 impl_reflect_value!(bool(
     Debug,

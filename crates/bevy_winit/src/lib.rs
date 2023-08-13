@@ -457,7 +457,11 @@ pub fn winit_runner(mut app: App) {
                             .keyboard_input
                             .send(converters::convert_keyboard_input(input, window_entity));
                     }
-                    WindowEvent::CursorMoved { position, .. } => {
+                    WindowEvent::CursorMoved {
+                        position,
+                        device_id,
+                        ..
+                    } => {
                         let physical_position = DVec2::new(position.x, position.y);
 
                         window.set_physical_cursor_position(Some(physical_position));
@@ -491,6 +495,7 @@ pub fn winit_runner(mut app: App) {
                             button: converters::convert_mouse_button(button),
                             state: converters::convert_element_state(state),
                             window: window_entity,
+                            device_id,
                         });
                     }
                     WindowEvent::TouchpadMagnify { delta, .. } => {
