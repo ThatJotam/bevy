@@ -63,11 +63,6 @@ use std::{
 /// # bevy_ecs::system::assert_is_system(my_system::<()>);
 /// ```
 ///
-/// ## `PhantomData`
-///
-/// [`PhantomData`] is a special type of `SystemParam` that does nothing.
-/// This is useful for constraining generic types or lifetimes.
-///
 /// # Generic `SystemParam`s
 ///
 /// When using the derive macro, you may see an error in the form of:
@@ -1739,11 +1734,5 @@ mod tests {
 
         fn my_system(_: InvariantParam) {}
         assert_is_system(my_system);
-    }
-
-    // Regression test for https://github.com/bevyengine/bevy/issues/8192.
-    #[derive(SystemParam)]
-    pub struct InvariantParam<'w, 's> {
-        _set: ParamSet<'w, 's, (Query<'w, 's, ()>,)>,
     }
 }
