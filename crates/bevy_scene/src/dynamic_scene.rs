@@ -2,64 +2,68 @@ use std::any::TypeId;
 
 use crate::{DynamicSceneBuilder, Scene, SceneSpawnError};
 use anyhow::Result;
-use bevy_app::AppTypeRegistry;
 use bevy_ecs::{
-    entity::EntityMap,
-    prelude::Entity,
-    reflect::{ReflectComponent, ReflectMapEntities},
+    entity::{Entity, EntityMap},
+    reflect::{AppTypeRegistry, ReflectComponent, ReflectMapEntities},
     world::World,
 };
-use bevy_reflect::{Reflect, TypeRegistryArc, TypeUuid};
+use bevy_reflect::{Reflect, TypePath, TypeRegistryArc, TypeUuid};
 use bevy_utils::HashMap;
 
 #[cfg(feature = "serialize")]
 use crate::serde::SceneSerializer;
+use bevy_ecs::reflect::ReflectResource;
 #[cfg(feature = "serialize")]
 use serde::Serialize;
 
-/// A collection of serializable dynamic entities, each with its own run-time defined set of components.
+/// A collection of serializable resources and dynamic entities.
+///
+/// Each dynamic entity in the collection contains its own run-time defined set of components.
 /// To spawn a dynamic scene, you can use either:
 /// * [`SceneSpawner::spawn_dynamic`](crate::SceneSpawner::spawn_dynamic)
 /// * adding the [`DynamicSceneBundle`](crate::DynamicSceneBundle) to an entity
 /// * adding the [`Handle<DynamicScene>`](bevy_asset::Handle) to an entity (the scene will only be
 /// visible if the entity already has [`Transform`](bevy_transform::components::Transform) and
 /// [`GlobalTransform`](bevy_transform::components::GlobalTransform) components)
-#[derive(Default, TypeUuid)]
+#[derive(Default, TypeUuid, TypePath)]
 #[uuid = "749479b1-fb8c-4ff8-a775-623aa76014f5"]
 pub struct DynamicScene {
+    pub resources: Vec<Box<dyn Reflect>>,
     pub entities: Vec<DynamicEntity>,
 }
 
 /// A reflection-powered serializable representation of an entity and its components.
 pub struct DynamicEntity {
-    /// The transiently unique identifier of a corresponding `Entity`.
-    pub entity: u32,
+    /// The identifier of the entity, unique within a scene (and the world it may have been generated from).
+    ///
+    /// Components that reference this entity must consistently use this identifier.
+    pub entity: Entity,
     /// A vector of boxed components that belong to the given entity and
-    /// implement the `Reflect` trait.
+    /// implement the [`Reflect`] trait.
     pub components: Vec<Box<dyn Reflect>>,
 }
 
 impl DynamicScene {
     /// Create a new dynamic scene from a given scene.
-    pub fn from_scene(scene: &Scene, type_registry: &AppTypeRegistry) -> Self {
-        Self::from_world(&scene.world, type_registry)
+    pub fn from_scene(scene: &Scene) -> Self {
+        Self::from_world(&scene.world)
     }
 
     /// Create a new dynamic scene from a given world.
-    pub fn from_world(world: &World, type_registry: &AppTypeRegistry) -> Self {
-        let mut builder =
-            DynamicSceneBuilder::from_world_with_type_registry(world, type_registry.clone());
+    pub fn from_world(world: &World) -> Self {
+        let mut builder = DynamicSceneBuilder::from_world(world);
 
         builder.extract_entities(world.iter_entities().map(|entity| entity.id()));
+        builder.extract_resources();
 
         builder.build()
     }
 
-    /// Write the dynamic entities and their corresponding components to the given world.
+    /// Write the resources, the dynamic entities, and their corresponding components to the given world.
     ///
     /// This method will return a [`SceneSpawnError`] if a type either is not registered
     /// in the provided [`AppTypeRegistry`] resource, or doesn't reflect the
-    /// [`Component`](bevy_ecs::component::Component) trait.
+    /// [`Component`](bevy_ecs::component::Component) or [`Resource`](bevy_ecs::prelude::Resource) trait.
     pub fn write_to_world_with(
         &self,
         world: &mut World,
@@ -67,6 +71,23 @@ impl DynamicScene {
         type_registry: &AppTypeRegistry,
     ) -> Result<(), SceneSpawnError> {
         let type_registry = type_registry.read();
+
+        for resource in &self.resources {
+            let registration = type_registry
+                .get_with_name(resource.type_name())
+                .ok_or_else(|| SceneSpawnError::UnregisteredType {
+                    type_name: resource.type_name().to_string(),
+                })?;
+            let reflect_resource = registration.data::<ReflectResource>().ok_or_else(|| {
+                SceneSpawnError::UnregisteredResource {
+                    type_name: resource.type_name().to_string(),
+                }
+            })?;
+
+            // If the world already contains an instance of the given resource
+            // just apply the (possibly) new value, otherwise insert the resource
+            reflect_resource.apply_or_insert(world, &**resource);
+        }
 
         // For each component types that reference other entities, we keep track
         // of which entities in the scene use that component.
@@ -79,7 +100,7 @@ impl DynamicScene {
             // or spawn a new entity with a transiently unique id if there is
             // no corresponding entry.
             let entity = *entity_map
-                .entry(bevy_ecs::entity::Entity::from_raw(scene_entity.entity))
+                .entry(scene_entity.entity)
                 .or_insert_with(|| world.spawn_empty().id());
             let entity_mut = &mut world.entity_mut(entity);
 
@@ -119,16 +140,14 @@ impl DynamicScene {
                 "we should be getting TypeId from this TypeRegistration in the first place",
             );
             if let Some(map_entities_reflect) = registration.data::<ReflectMapEntities>() {
-                map_entities_reflect
-                    .map_specific_entities(world, entity_map, &entities)
-                    .unwrap();
+                map_entities_reflect.map_entities(world, entity_map, &entities);
             }
         }
 
         Ok(())
     }
 
-    /// Write the dynamic entities and their corresponding components to the given world.
+    /// Write the resources, the dynamic entities, and their corresponding components to the given world.
     ///
     /// This method will return a [`SceneSpawnError`] if a type either is not registered
     /// in the world's [`AppTypeRegistry`] resource, or doesn't reflect the
@@ -164,8 +183,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bevy_app::AppTypeRegistry;
-    use bevy_ecs::{entity::EntityMap, system::Command, world::World};
+    use bevy_ecs::{entity::EntityMap, reflect::AppTypeRegistry, system::Command, world::World};
     use bevy_hierarchy::{AddChild, Parent};
 
     use crate::dynamic_scene_builder::DynamicSceneBuilder;
@@ -187,7 +205,7 @@ mod tests {
             parent: original_parent_entity,
             child: original_child_entity,
         }
-        .write(&mut world);
+        .apply(&mut world);
 
         // We then write this relationship to a new scene, and then write that scene back to the
         // world to create another parent and child relationship
@@ -208,7 +226,7 @@ mod tests {
             parent: original_child_entity,
             child: from_scene_parent_entity,
         }
-        .write(&mut world);
+        .apply(&mut world);
 
         // We then reload the scene to make sure that from_scene_parent_entity's parent component
         // isn't updated with the entity map, since this component isn't defined in the scene.
