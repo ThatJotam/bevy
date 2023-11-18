@@ -20,7 +20,7 @@ fn main() {
         .insert_resource(WinitSettings {
             focused_mode: bevy::winit::UpdateMode::Continuous,
             unfocused_mode: bevy::winit::UpdateMode::ReactiveLowPower {
-                max_wait: Duration::from_millis(10),
+                wait: Duration::from_millis(10),
             },
             ..default()
         })
@@ -177,7 +177,6 @@ pub(crate) mod test_setup {
                     "Press spacebar to cycle modes\n",
                     TextStyle {
                         font_size: 50.0,
-                        color: Color::WHITE,
                         ..default()
                     },
                 ),
