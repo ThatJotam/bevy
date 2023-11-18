@@ -36,7 +36,7 @@ pub struct MouseButtonInput {
     pub state: ButtonState,
     /// Window that received the input.
     pub window: Entity,
-
+    /// Physical device that received the input.
     pub device_id: DeviceId,
 }
 
@@ -87,7 +87,7 @@ pub enum MouseButton {
 pub struct MouseMotion {
     /// The change in the position of the pointing device since the last event was sent.
     pub delta: Vec2,
-
+    /// Physical device that received the input.
     pub device_id: DeviceId,
 }
 
