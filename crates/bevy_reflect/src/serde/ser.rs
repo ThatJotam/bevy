@@ -28,16 +28,23 @@ impl<'a> Serializable<'a> {
     }
 }
 
-fn get_serializable<'a, E: serde::ser::Error>(
+fn get_serializable<'a, E: Error>(
     reflect_value: &'a dyn Reflect,
     type_registry: &TypeRegistry,
 ) -> Result<Serializable<'a>, E> {
+    let info = reflect_value.get_represented_type_info().ok_or_else(|| {
+        Error::custom(format_args!(
+            "Type '{}' does not represent any type",
+            reflect_value.reflect_type_path(),
+        ))
+    })?;
+
     let reflect_serialize = type_registry
-        .get_type_data::<ReflectSerialize>(reflect_value.type_id())
+        .get_type_data::<ReflectSerialize>(info.type_id())
         .ok_or_else(|| {
-            serde::ser::Error::custom(format_args!(
+            Error::custom(format_args!(
                 "Type '{}' did not register ReflectSerialize",
-                reflect_value.reflect_type_path()
+                info.type_path(),
             ))
         })?;
     Ok(reflect_serialize.get_serializable(reflect_value))
@@ -317,8 +324,8 @@ impl<'a> Serialize for EnumSerializer<'a> {
 
         match variant_type {
             VariantType::Unit => {
-                if self.enum_value.reflect_module_path() == Some("core::option")
-                    && self.enum_value.reflect_type_ident() == Some("Option")
+                if type_info.type_path_table().module_path() == Some("core::option")
+                    && type_info.type_path_table().ident() == Some("Option")
                 {
                     serializer.serialize_none()
                 } else {
@@ -352,10 +359,9 @@ impl<'a> Serialize for EnumSerializer<'a> {
             }
             VariantType::Tuple if field_len == 1 => {
                 let field = self.enum_value.field_at(0).unwrap();
-                if self
-                    .enum_value
-                    .reflect_type_path()
-                    .starts_with("core::option::Option")
+
+                if type_info.type_path_table().module_path() == Some("core::option")
+                    && type_info.type_path_table().ident() == Some("Option")
                 {
                     serializer.serialize_some(&TypedReflectSerializer::new(field, self.registry))
                 } else {
@@ -464,8 +470,8 @@ impl<'a> Serialize for ArraySerializer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate as bevy_reflect;
     use crate::serde::ReflectSerializer;
+    use crate::{self as bevy_reflect, Struct};
     use crate::{Reflect, ReflectSerialize, TypeRegistry};
     use bevy_utils::HashMap;
     use ron::extensions::Extensions;
@@ -568,12 +574,10 @@ mod tests {
         registry
     }
 
-    #[test]
-    fn should_serialize() {
+    fn get_my_struct() -> MyStruct {
         let mut map = HashMap::new();
         map.insert(64, 32);
-
-        let input = MyStruct {
+        MyStruct {
             primitive_value: 123,
             option_value: Some(String::from("Hello world!")),
             option_value_complex: Some(SomeStruct { foo: 123 }),
@@ -600,9 +604,14 @@ mod tests {
                 value: 100,
                 inner_struct: SomeSerializableStruct { foo: 101 },
             },
-        };
+        }
+    }
 
+    #[test]
+    fn should_serialize() {
+        let input = get_my_struct();
         let registry = get_registry();
+
         let serializer = ReflectSerializer::new(&input, &registry);
 
         let config = PrettyConfig::default()
@@ -770,38 +779,7 @@ mod tests {
 
     #[test]
     fn should_serialize_non_self_describing_binary() {
-        let mut map = HashMap::new();
-        map.insert(64, 32);
-
-        let input = MyStruct {
-            primitive_value: 123,
-            option_value: Some(String::from("Hello world!")),
-            option_value_complex: Some(SomeStruct { foo: 123 }),
-            tuple_value: (PI, 1337),
-            list_value: vec![-2, -1, 0, 1, 2],
-            array_value: [-2, -1, 0, 1, 2],
-            map_value: map,
-            struct_value: SomeStruct { foo: 999999999 },
-            tuple_struct_value: SomeTupleStruct(String::from("Tuple Struct")),
-            unit_struct: SomeUnitStruct,
-            unit_enum: SomeEnum::Unit,
-            newtype_enum: SomeEnum::NewType(123),
-            tuple_enum: SomeEnum::Tuple(1.23, 3.21),
-            struct_enum: SomeEnum::Struct {
-                foo: String::from("Struct variant value"),
-            },
-            ignored_struct: SomeIgnoredStruct { ignored: 123 },
-            ignored_tuple_struct: SomeIgnoredTupleStruct(123),
-            ignored_struct_variant: SomeIgnoredEnum::Struct {
-                foo: String::from("Struct Variant"),
-            },
-            ignored_tuple_variant: SomeIgnoredEnum::Tuple(1.23, 3.45),
-            custom_serialize: CustomSerialize {
-                value: 100,
-                inner_struct: SomeSerializableStruct { foo: 101 },
-            },
-        };
-
+        let input = get_my_struct();
         let registry = get_registry();
 
         let serializer = ReflectSerializer::new(&input, &registry);
@@ -828,38 +806,7 @@ mod tests {
 
     #[test]
     fn should_serialize_self_describing_binary() {
-        let mut map = HashMap::new();
-        map.insert(64, 32);
-
-        let input = MyStruct {
-            primitive_value: 123,
-            option_value: Some(String::from("Hello world!")),
-            option_value_complex: Some(SomeStruct { foo: 123 }),
-            tuple_value: (PI, 1337),
-            list_value: vec![-2, -1, 0, 1, 2],
-            array_value: [-2, -1, 0, 1, 2],
-            map_value: map,
-            struct_value: SomeStruct { foo: 999999999 },
-            tuple_struct_value: SomeTupleStruct(String::from("Tuple Struct")),
-            unit_struct: SomeUnitStruct,
-            unit_enum: SomeEnum::Unit,
-            newtype_enum: SomeEnum::NewType(123),
-            tuple_enum: SomeEnum::Tuple(1.23, 3.21),
-            struct_enum: SomeEnum::Struct {
-                foo: String::from("Struct variant value"),
-            },
-            ignored_struct: SomeIgnoredStruct { ignored: 123 },
-            ignored_tuple_struct: SomeIgnoredTupleStruct(123),
-            ignored_struct_variant: SomeIgnoredEnum::Struct {
-                foo: String::from("Struct Variant"),
-            },
-            ignored_tuple_variant: SomeIgnoredEnum::Tuple(1.23, 3.45),
-            custom_serialize: CustomSerialize {
-                value: 100,
-                inner_struct: SomeSerializableStruct { foo: 101 },
-            },
-        };
-
+        let input = get_my_struct();
         let registry = get_registry();
 
         let serializer = ReflectSerializer::new(&input, &registry);
@@ -880,5 +827,44 @@ mod tests {
         ];
 
         assert_eq!(expected, bytes);
+    }
+
+    #[test]
+    fn should_serialize_dynamic_option() {
+        #[derive(Default, Reflect)]
+        struct OtherStruct {
+            some: Option<SomeStruct>,
+            none: Option<SomeStruct>,
+        }
+
+        let value = OtherStruct {
+            some: Some(SomeStruct { foo: 999999999 }),
+            none: None,
+        };
+        let dynamic = value.clone_dynamic();
+        let reflect = dynamic.as_reflect();
+
+        let registry = get_registry();
+
+        let serializer = ReflectSerializer::new(reflect, &registry);
+
+        let mut buf = Vec::new();
+
+        let format = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+        let mut ser = serde_json::Serializer::with_formatter(&mut buf, format);
+
+        serializer.serialize(&mut ser).unwrap();
+
+        let output = std::str::from_utf8(&buf).unwrap();
+        let expected = r#"{
+    "bevy_reflect::serde::ser::tests::OtherStruct": {
+        "some": {
+            "foo": 999999999
+        },
+        "none": null
+    }
+}"#;
+
+        assert_eq!(expected, output);
     }
 }
