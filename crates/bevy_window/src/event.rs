@@ -133,7 +133,7 @@ pub struct CursorMoved {
     pub window: Entity,
     /// The cursor position in logical pixels.
     pub position: Vec2,
-
+    /// Physical device that received the input.
     pub device_id: DeviceId,
 }
 
