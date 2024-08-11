@@ -1,12 +1,12 @@
 #[cfg(feature = "file_watcher")]
 mod file_watcher;
 
-#[cfg(feature = "multi-threaded")]
+#[cfg(feature = "multi_threaded")]
 mod file_asset;
-#[cfg(not(feature = "multi-threaded"))]
+#[cfg(not(feature = "multi_threaded"))]
 mod sync_file_asset;
 
-use bevy_log::error;
+use bevy_utils::tracing::error;
 #[cfg(feature = "file_watcher")]
 pub use file_watcher::*;
 

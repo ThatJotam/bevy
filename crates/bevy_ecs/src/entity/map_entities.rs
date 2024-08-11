@@ -37,7 +37,6 @@ use super::EntityHashMap;
 ///     }
 /// }
 /// ```
-///
 pub trait MapEntities {
     /// Updates all [`Entity`] references stored inside using `entity_mapper`.
     ///
@@ -121,15 +120,6 @@ pub struct SceneEntityMapper<'m> {
 }
 
 impl<'m> SceneEntityMapper<'m> {
-    #[deprecated(
-        since = "0.13.0",
-        note = "please use `EntityMapper::map_entity` instead"
-    )]
-    /// Returns the corresponding mapped entity or reserves a new dead entity ID in the current world if it is absent.
-    pub fn get_or_reserve(&mut self, entity: Entity) -> Entity {
-        self.map_entity(entity)
-    }
-
     /// Gets a reference to the underlying [`EntityHashMap<Entity>`].
     pub fn get_map(&'m self) -> &'m EntityHashMap<Entity> {
         self.map
@@ -141,7 +131,7 @@ impl<'m> SceneEntityMapper<'m> {
     }
 
     /// Creates a new [`SceneEntityMapper`], spawning a temporary base [`Entity`] in the provided [`World`]
-    fn new(map: &'m mut EntityHashMap<Entity>, world: &mut World) -> Self {
+    pub fn new(map: &'m mut EntityHashMap<Entity>, world: &mut World) -> Self {
         Self {
             map,
             // SAFETY: Entities data is kept in a valid state via `EntityMapper::world_scope`
@@ -154,7 +144,7 @@ impl<'m> SceneEntityMapper<'m> {
     /// [`Entity`] while reserving extra generations via [`crate::entity::Entities::reserve_generations`]. Because this
     /// renders the [`SceneEntityMapper`] unable to safely allocate any more references, this method takes ownership of
     /// `self` in order to render it unusable.
-    fn finish(self, world: &mut World) {
+    pub fn finish(self, world: &mut World) {
         // SAFETY: Entities data is kept in a valid state via `EntityMap::world_scope`
         let entities = unsafe { world.entities_mut() };
         assert!(entities.free(self.dead_start).is_some());

@@ -1,3 +1,5 @@
+//! Tool used to build Bevy examples for wasm.
+
 use std::{fs::File, io::Write};
 
 use clap::{Parser, ValueEnum};
@@ -48,7 +50,7 @@ fn main() {
     let mut features: Vec<&str> = cli.features.iter().map(|f| f.as_str()).collect();
     if let Some(frames) = cli.frames {
         let mut file = File::create("ci_testing_config.ron").unwrap();
-        file.write_fmt(format_args!("(exit_after: Some({frames}))"))
+        file.write_fmt(format_args!("(events: [({frames}, AppExit)])"))
             .unwrap();
         features.push("bevy_ci_testing");
     }
