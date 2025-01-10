@@ -1,22 +1,22 @@
-use crate::color_difference::EuclideanDistance;
 use crate::{
-    impl_componentwise_vector_space, Alpha, ColorToComponents, ColorToPacked, Gray, LinearRgba,
-    Luminance, Mix, StandardColor, Xyza,
+    color_difference::EuclideanDistance, impl_componentwise_vector_space, Alpha, ColorToComponents,
+    ColorToPacked, Gray, LinearRgba, Luminance, Mix, StandardColor, Xyza,
 };
-use bevy_math::{Vec3, Vec4};
+use bevy_math::{ops, Vec3, Vec4};
+#[cfg(feature = "bevy_reflect")]
 use bevy_reflect::prelude::*;
-use thiserror::Error;
+use derive_more::derive::{Display, Error, From};
 
 /// Non-linear standard RGB with alpha.
 #[doc = include_str!("../docs/conversion.md")]
 /// <div>
 #[doc = include_str!("../docs/diagrams/model_graph.svg")]
 /// </div>
-#[derive(Debug, Clone, Copy, PartialEq, Reflect)]
-#[reflect(PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "bevy_reflect", derive(Reflect), reflect(PartialEq, Default))]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
-    feature = "serialize",
-    derive(serde::Serialize, serde::Deserialize),
+    all(feature = "serialize", feature = "bevy_reflect"),
     reflect(Serialize, Deserialize)
 )]
 pub struct Srgba {
@@ -184,7 +184,6 @@ impl Srgba {
     /// * `b` - Blue channel. [0, 255]
     ///
     /// See also [`Srgba::new`], [`Srgba::rgba_u8`], [`Srgba::hex`].
-    ///
     pub fn rgb_u8(r: u8, g: u8, b: u8) -> Self {
         Self::from_u8_array_no_alpha([r, g, b])
     }
@@ -201,7 +200,6 @@ impl Srgba {
     /// * `a` - Alpha channel. [0, 255]
     ///
     /// See also [`Srgba::new`], [`Srgba::rgb_u8`], [`Srgba::hex`].
-    ///
     pub fn rgba_u8(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self::from_u8_array([r, g, b, a])
     }
@@ -214,7 +212,7 @@ impl Srgba {
         if value <= 0.04045 {
             value / 12.92 // linear falloff in dark values
         } else {
-            ((value + 0.055) / 1.055).powf(2.4) // gamma curve in other area
+            ops::powf((value + 0.055) / 1.055, 2.4) // gamma curve in other area
         }
     }
 
@@ -227,7 +225,7 @@ impl Srgba {
         if value <= 0.0031308 {
             value * 12.92 // linear falloff in dark values
         } else {
-            (1.055 * value.powf(1.0 / 2.4)) - 0.055 // gamma curve in other area
+            (1.055 * ops::powf(value, 1.0 / 2.4)) - 0.055 // gamma curve in other area
         }
     }
 }
@@ -423,16 +421,17 @@ impl From<Srgba> for Xyza {
 }
 
 /// Error returned if a hex string could not be parsed as a color.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, Display, PartialEq, Eq, From)]
 pub enum HexColorError {
     /// Parsing error.
-    #[error("Invalid hex string")]
-    Parse(#[from] std::num::ParseIntError),
+    #[display("Invalid hex string")]
+    Parse(core::num::ParseIntError),
     /// Invalid length.
-    #[error("Unexpected length of hex string")]
+    #[display("Unexpected length of hex string")]
     Length,
     /// Invalid character.
-    #[error("Invalid hex char")]
+    #[display("Invalid hex char")]
+    #[error(ignore)]
     Char(char),
 }
 

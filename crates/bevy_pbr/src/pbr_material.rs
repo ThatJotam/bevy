@@ -1,18 +1,19 @@
 use bevy_asset::Asset;
 use bevy_color::{Alpha, ColorToComponents};
-use bevy_math::{vec2, Affine2, Affine3, Mat2, Mat3, Vec2, Vec3, Vec4};
+use bevy_math::{Affine2, Affine3, Mat2, Mat3, Vec2, Vec3, Vec4};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render::{
     mesh::MeshVertexBufferLayoutRef, render_asset::RenderAssets, render_resource::*,
 };
 use bitflags::bitflags;
 
-use crate::deferred::DEFAULT_PBR_DEFERRED_LIGHTING_PASS_ID;
-use crate::*;
+use crate::{deferred::DEFAULT_PBR_DEFERRED_LIGHTING_PASS_ID, *};
 
 /// An enum to define which UV attribute to use for a texture.
+///
 /// It is used for every texture in the [`StandardMaterial`].
-/// It only supports two UV attributes, [`Mesh::ATTRIBUTE_UV_0`] and [`Mesh::ATTRIBUTE_UV_1`].
+/// It only supports two UV attributes, [`bevy_render::mesh::Mesh::ATTRIBUTE_UV_0`] and
+/// [`bevy_render::mesh::Mesh::ATTRIBUTE_UV_1`].
 /// The default is [`UvChannel::Uv0`].
 #[derive(Reflect, Default, Debug, Clone, PartialEq, Eq)]
 #[reflect(Default, Debug)]
@@ -127,7 +128,6 @@ pub struct StandardMaterial {
     ///
     /// 0.089 is the minimum floating point value that won't be rounded down to 0 in the
     /// calculations used.
-    //
     // Technically for 32-bit floats, 0.045 could be used.
     // See <https://google.github.io/filament/Filament.html#materialsystem/parameterization/>
     pub perceptual_roughness: f32,
@@ -235,13 +235,13 @@ pub struct StandardMaterial {
     /// with distortion and blur effects.
     ///
     /// - [`Camera3d::screen_space_specular_transmission_steps`](bevy_core_pipeline::core_3d::Camera3d::screen_space_specular_transmission_steps) can be used to enable transmissive objects
-    /// to be seen through other transmissive objects, at the cost of additional draw calls and texture copies; (Use with caution!)
+    ///     to be seen through other transmissive objects, at the cost of additional draw calls and texture copies; (Use with caution!)
     ///     - If a simplified approximation of specular transmission using only environment map lighting is sufficient, consider setting
-    /// [`Camera3d::screen_space_specular_transmission_steps`](bevy_core_pipeline::core_3d::Camera3d::screen_space_specular_transmission_steps) to `0`.
+    ///         [`Camera3d::screen_space_specular_transmission_steps`](bevy_core_pipeline::core_3d::Camera3d::screen_space_specular_transmission_steps) to `0`.
     /// - If purely diffuse light transmission is needed, (i.e. “translucency”) consider using [`StandardMaterial::diffuse_transmission`] instead,
-    /// for a much less expensive effect.
+    ///     for a much less expensive effect.
     /// - Specular transmission is rendered before alpha blending, so any material with [`AlphaMode::Blend`], [`AlphaMode::Premultiplied`], [`AlphaMode::Add`] or [`AlphaMode::Multiply`]
-    ///   won't be visible through specular transmissive materials.
+    ///     won't be visible through specular transmissive materials.
     #[doc(alias = "refraction")]
     pub specular_transmission: f32,
 
@@ -387,7 +387,7 @@ pub struct StandardMaterial {
 
     /// Specifies the level of exposure to ambient light.
     ///
-    /// This is usually generated and stored automatically ("baked") by 3D-modelling software.
+    /// This is usually generated and stored automatically ("baked") by 3D-modeling software.
     ///
     /// Typically, steep concave parts of a model (such as the armpit of a shirt) are darker,
     /// because they have little exposure to light.
@@ -599,7 +599,7 @@ pub struct StandardMaterial {
 
     /// The depth map used for [parallax mapping].
     ///
-    /// It is a greyscale image where white represents bottom and black the top.
+    /// It is a grayscale image where white represents bottom and black the top.
     /// If this field is set, bevy will apply [parallax mapping].
     /// Parallax mapping, unlike simple normal maps, will move the texture
     /// coordinate according to the current perspective,
@@ -913,7 +913,7 @@ pub struct StandardMaterialUniform {
     // Use a color for user-friendliness even though we technically don't use the alpha channel
     // Might be used in the future for exposure correction in HDR
     pub emissive: Vec4,
-    /// Color white light takes after travelling through the attenuation distance underneath the material surface
+    /// Color white light takes after traveling through the attenuation distance underneath the material surface
     pub attenuation_color: Vec4,
     /// The transform applied to the UVs corresponding to `ATTRIBUTE_UV_0` on the mesh before sampling. Default is identity.
     pub uv_transform: Mat3,
@@ -1025,7 +1025,7 @@ impl AsBindGroupShaderType<StandardMaterialUniform> for StandardMaterial {
 
         let has_normal_map = self.normal_map_texture.is_some();
         if has_normal_map {
-            let normal_map_id = self.normal_map_texture.as_ref().map(|h| h.id()).unwrap();
+            let normal_map_id = self.normal_map_texture.as_ref().map(Handle::id).unwrap();
             if let Some(texture) = images.get(normal_map_id) {
                 match texture.texture_format {
                     // All 2-component unorm formats
@@ -1067,10 +1067,7 @@ impl AsBindGroupShaderType<StandardMaterialUniform> for StandardMaterial {
         emissive[3] = self.emissive_exposure_weight;
 
         // Doing this up front saves having to do this repeatedly in the fragment shader.
-        let anisotropy_rotation = vec2(
-            self.anisotropy_rotation.cos(),
-            self.anisotropy_rotation.sin(),
-        );
+        let anisotropy_rotation = Vec2::from_angle(self.anisotropy_rotation);
 
         StandardMaterialUniform {
             base_color: LinearRgba::from(self.base_color).to_vec4(),

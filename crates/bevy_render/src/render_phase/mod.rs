@@ -37,6 +37,7 @@ use encase::{internal::WriteInto, ShaderSize};
 use nonmax::NonMaxU32;
 pub use rangefinder::*;
 
+use crate::sync_world::MainEntity;
 use crate::{
     batching::{
         self,
@@ -52,8 +53,7 @@ use bevy_ecs::{
     prelude::*,
     system::{lifetimeless::SRes, SystemParamItem},
 };
-use smallvec::SmallVec;
-use std::{
+use core::{
     fmt::{self, Debug, Formatter},
     hash::Hash,
     iter,
@@ -61,6 +61,7 @@ use std::{
     ops::Range,
     slice::SliceIndex,
 };
+use smallvec::SmallVec;
 
 /// Stores the rendering instructions for a single phase that uses bins in all
 /// views.
@@ -100,7 +101,7 @@ where
     ///
     /// Each bin corresponds to a single batch set. For unbatchable entities,
     /// prefer `unbatchable_values` instead.
-    pub(crate) batchable_mesh_values: HashMap<BPI::BinKey, Vec<Entity>>,
+    pub batchable_mesh_values: HashMap<BPI::BinKey, Vec<(Entity, MainEntity)>>,
 
     /// A list of `BinKey`s for unbatchable items.
     ///
@@ -111,7 +112,7 @@ where
     /// The unbatchable bins.
     ///
     /// Each entity here is rendered in a separate drawcall.
-    pub(crate) unbatchable_mesh_values: HashMap<BPI::BinKey, UnbatchableBinnedEntities>,
+    pub unbatchable_mesh_values: HashMap<BPI::BinKey, UnbatchableBinnedEntities>,
 
     /// Items in the bin that aren't meshes at all.
     ///
@@ -120,7 +121,7 @@ where
     /// entity are simply called in order at rendering time.
     ///
     /// See the `custom_phase_item` example for an example of how to use this.
-    pub non_mesh_items: Vec<(BPI::BinKey, Entity)>,
+    pub non_mesh_items: Vec<(BPI::BinKey, (Entity, MainEntity))>,
 
     /// Information on each batch set.
     ///
@@ -142,8 +143,7 @@ pub struct BinnedRenderPhaseBatch {
     /// An entity that's *representative* of this batch.
     ///
     /// Bevy uses this to fetch the mesh. It can be any entity in the batch.
-    pub representative_entity: Entity,
-
+    pub representative_entity: (Entity, MainEntity),
     /// The range of instance indices in this batch.
     pub instance_range: Range<u32>,
 
@@ -155,9 +155,9 @@ pub struct BinnedRenderPhaseBatch {
 }
 
 /// Information about the unbatchable entities in a bin.
-pub(crate) struct UnbatchableBinnedEntities {
+pub struct UnbatchableBinnedEntities {
     /// The entities.
-    pub(crate) entities: Vec<Entity>,
+    pub entities: Vec<(Entity, MainEntity)>,
 
     /// The GPU array buffer indices of each unbatchable binned entity.
     pub(crate) buffer_indices: UnbatchableBinnedEntityIndexSet,
@@ -276,7 +276,12 @@ where
     /// The `phase_type` parameter specifies whether the entity is a
     /// preprocessable mesh and whether it can be binned with meshes of the same
     /// type.
-    pub fn add(&mut self, key: BPI::BinKey, entity: Entity, phase_type: BinnedRenderPhaseType) {
+    pub fn add(
+        &mut self,
+        key: BPI::BinKey,
+        entity: (Entity, MainEntity),
+        phase_type: BinnedRenderPhaseType,
+    ) {
         match phase_type {
             BinnedRenderPhaseType::BatchableMesh => {
                 match self.batchable_mesh_values.entry(key.clone()) {
@@ -314,7 +319,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
-    ) {
+    ) -> Result<(), DrawError> {
         {
             let draw_functions = world.resource::<DrawFunctions<BPI>>();
             let mut draw_functions = draw_functions.write();
@@ -323,9 +328,11 @@ where
             // locks.
         }
 
-        self.render_batchable_meshes(render_pass, world, view);
-        self.render_unbatchable_meshes(render_pass, world, view);
-        self.render_non_meshes(render_pass, world, view);
+        self.render_batchable_meshes(render_pass, world, view)?;
+        self.render_unbatchable_meshes(render_pass, world, view)?;
+        self.render_non_meshes(render_pass, world, view)?;
+
+        Ok(())
     }
 
     /// Renders all batchable meshes queued in this phase.
@@ -334,7 +341,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
-    ) {
+    ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
 
@@ -355,9 +362,11 @@ where
                     continue;
                 };
 
-                draw_function.draw(world, render_pass, view, &binned_phase_item);
+                draw_function.draw(world, render_pass, view, &binned_phase_item)?;
             }
         }
+
+        Ok(())
     }
 
     /// Renders all unbatchable meshes queued in this phase.
@@ -366,7 +375,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
-    ) {
+    ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
 
@@ -412,9 +421,10 @@ where
                     continue;
                 };
 
-                draw_function.draw(world, render_pass, view, &binned_phase_item);
+                draw_function.draw(world, render_pass, view, &binned_phase_item)?;
             }
         }
+        Ok(())
     }
 
     /// Renders all objects of type [`BinnedRenderPhaseType::NonMesh`].
@@ -425,7 +435,7 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
-    ) {
+    ) -> Result<(), DrawError> {
         let draw_functions = world.resource::<DrawFunctions<BPI>>();
         let mut draw_functions = draw_functions.write();
 
@@ -439,8 +449,10 @@ where
                 continue;
             };
 
-            draw_function.draw(world, render_pass, view, &binned_phase_item);
+            draw_function.draw(world, render_pass, view, &binned_phase_item)?;
         }
+
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -760,7 +772,7 @@ where
     /// An [`Iterator`] through the associated [`Entity`] for each [`PhaseItem`] in order.
     #[inline]
     pub fn iter_entities(&'_ self) -> impl Iterator<Item = Entity> + '_ {
-        self.items.iter().map(|item| item.entity())
+        self.items.iter().map(PhaseItem::entity)
     }
 
     /// Renders all of its [`PhaseItem`]s using their corresponding draw functions.
@@ -769,8 +781,8 @@ where
         render_pass: &mut TrackedRenderPass<'w>,
         world: &'w World,
         view: Entity,
-    ) {
-        self.render_range(render_pass, world, view, ..);
+    ) -> Result<(), DrawError> {
+        self.render_range(render_pass, world, view, ..)
     }
 
     /// Renders all [`PhaseItem`]s in the provided `range` (based on their index in `self.items`) using their corresponding draw functions.
@@ -780,7 +792,7 @@ where
         world: &'w World,
         view: Entity,
         range: impl SliceIndex<[I], Output = [I]>,
-    ) {
+    ) -> Result<(), DrawError> {
         let items = self
             .items
             .get(range)
@@ -798,10 +810,11 @@ where
                 index += 1;
             } else {
                 let draw_function = draw_functions.get_mut(item.draw_function()).unwrap();
-                draw_function.draw(world, render_pass, view, item);
+                draw_function.draw(world, render_pass, view, item)?;
                 index += batch_range.len();
             }
         }
+        Ok(())
     }
 }
 
@@ -819,15 +832,15 @@ where
 /// [`SortedPhaseItem`]s.
 ///
 /// * Binned phase items have a `BinKey` which specifies what bin they're to be
-/// placed in. All items in the same bin are eligible to be batched together.
-/// The `BinKey`s are sorted, but the individual bin items aren't. Binned phase
-/// items are good for opaque meshes, in which the order of rendering isn't
-/// important. Generally, binned phase items are faster than sorted phase items.
+///     placed in. All items in the same bin are eligible to be batched together.
+///     The `BinKey`s are sorted, but the individual bin items aren't. Binned phase
+///     items are good for opaque meshes, in which the order of rendering isn't
+///     important. Generally, binned phase items are faster than sorted phase items.
 ///
 /// * Sorted phase items, on the other hand, are placed into one large buffer
-/// and then sorted all at once. This is needed for transparent meshes, which
-/// have to be sorted back-to-front to render with the painter's algorithm.
-/// These types of phase items are generally slower than binned phase items.
+///     and then sorted all at once. This is needed for transparent meshes, which
+///     have to be sorted back-to-front to render with the painter's algorithm.
+///     These types of phase items are generally slower than binned phase items.
 pub trait PhaseItem: Sized + Send + Sync + 'static {
     /// Whether or not this `PhaseItem` should be subjected to automatic batching. (Default: `true`)
     const AUTOMATIC_BATCHING: bool = true;
@@ -837,6 +850,9 @@ pub trait PhaseItem: Sized + Send + Sync + 'static {
     /// This is used to fetch the render data of the entity, required by the draw function,
     /// from the render world .
     fn entity(&self) -> Entity;
+
+    /// The main world entity represented by this `PhaseItem`.
+    fn main_entity(&self) -> MainEntity;
 
     /// Specifies the [`Draw`] function used to render the item.
     fn draw_function(&self) -> DrawFunctionId;
@@ -865,12 +881,12 @@ pub trait PhaseItem: Sized + Send + Sync + 'static {
 /// instances they already have. These can be:
 ///
 /// * The *dynamic offset*: a `wgpu` dynamic offset into the uniform buffer of
-/// instance data. This is used on platforms that don't support storage
-/// buffers, to work around uniform buffer size limitations.
+///     instance data. This is used on platforms that don't support storage
+///     buffers, to work around uniform buffer size limitations.
 ///
 /// * The *indirect parameters index*: an index into the buffer that specifies
-/// the indirect parameters for this [`PhaseItem`]'s drawcall. This is used when
-/// indirect mode is on (as used for GPU culling).
+///     the indirect parameters for this [`PhaseItem`]'s drawcall. This is used when
+///     indirect mode is on (as used for GPU culling).
 ///
 /// Note that our indirect draw functionality requires storage buffers, so it's
 /// impossible to have both a dynamic offset and an indirect parameters index.
@@ -1010,7 +1026,7 @@ pub trait BinnedPhaseItem: PhaseItem {
     /// structures, resulting in significant memory savings.
     fn new(
         key: Self::BinKey,
-        representative_entity: Entity,
+        representative_entity: (Entity, MainEntity),
         batch_range: Range<u32>,
         extra_index: PhaseItemExtraIndex,
     ) -> Self;
@@ -1045,7 +1061,7 @@ pub trait SortedPhaseItem: PhaseItem {
     /// It's advised to always profile for performance changes when changing this implementation.
     #[inline]
     fn sort(items: &mut [Self]) {
-        items.sort_unstable_by_key(|item| item.sort_key());
+        items.sort_unstable_by_key(Self::sort_key);
     }
 }
 
@@ -1081,7 +1097,7 @@ impl<P: CachedRenderPipelinePhaseItem> RenderCommand<P> for SetItemPipeline {
             pass.set_render_pipeline(pipeline);
             RenderCommandResult::Success
         } else {
-            RenderCommandResult::Failure
+            RenderCommandResult::Skip
         }
     }
 }
