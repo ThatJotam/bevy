@@ -1,4 +1,4 @@
-use bevy_render::view::Visibility;
+use bevy_render::view::{self, Visibility};
 
 use super::*;
 
@@ -19,9 +19,22 @@ use super::*;
 /// | 4000 | 300 |    | 75-100 | 40.5  |
 ///
 /// Source: [Wikipedia](https://en.wikipedia.org/wiki/Lumen_(unit)#Lighting)
+///
+/// ## Shadows
+///
+/// To enable shadows, set the `shadows_enabled` property to `true`.
+///
+/// To control the resolution of the shadow maps, use the [`PointLightShadowMap`] resource.
 #[derive(Component, Debug, Clone, Copy, Reflect)]
-#[reflect(Component, Default, Debug)]
-#[require(CubemapFrusta, CubemapVisibleEntities, Transform, Visibility)]
+#[reflect(Component, Default, Debug, Clone)]
+#[require(
+    CubemapFrusta,
+    CubemapVisibleEntities,
+    Transform,
+    Visibility,
+    VisibilityClass
+)]
+#[component(on_add = view::add_visibility_class::<LightVisibilityClass>)]
 pub struct PointLight {
     /// The color of this light source.
     pub color: Color,
@@ -64,6 +77,18 @@ pub struct PointLight {
     #[cfg(feature = "experimental_pbr_pcss")]
     pub soft_shadows_enabled: bool,
 
+    /// Whether this point light contributes diffuse lighting to meshes with
+    /// lightmaps.
+    ///
+    /// Set this to false if your lightmap baking tool bakes the direct diffuse
+    /// light from this point light into the lightmaps in order to avoid
+    /// counting the radiance from this light twice. Note that the specular
+    /// portion of the light is always considered, because Bevy currently has no
+    /// means to bake specular light.
+    ///
+    /// By default, this is set to true.
+    pub affects_lightmapped_mesh_diffuse: bool,
+
     /// A bias used when sampling shadow maps to avoid "shadow-acne", or false shadow occlusions
     /// that happen as a result of shadow-map fragments not mapping 1:1 to screen-space fragments.
     /// Too high of a depth bias can lead to shadows detaching from their casters, or
@@ -96,6 +121,7 @@ impl Default for PointLight {
             range: 20.0,
             radius: 0.0,
             shadows_enabled: false,
+            affects_lightmapped_mesh_diffuse: true,
             shadow_depth_bias: Self::DEFAULT_SHADOW_DEPTH_BIAS,
             shadow_normal_bias: Self::DEFAULT_SHADOW_NORMAL_BIAS,
             shadow_map_near_z: Self::DEFAULT_SHADOW_MAP_NEAR_Z,

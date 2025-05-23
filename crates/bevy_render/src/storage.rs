@@ -4,7 +4,7 @@ use crate::{
     renderer::RenderDevice,
 };
 use bevy_app::{App, Plugin};
-use bevy_asset::{Asset, AssetApp};
+use bevy_asset::{Asset, AssetApp, AssetId};
 use bevy_ecs::system::{lifetimeless::SRes, SystemParamItem};
 use bevy_reflect::{prelude::ReflectDefault, Reflect};
 use bevy_utils::default;
@@ -27,7 +27,7 @@ impl Plugin for StoragePlugin {
 /// A storage buffer that is prepared as a [`RenderAsset`] and uploaded to the GPU.
 #[derive(Asset, Reflect, Debug, Clone)]
 #[reflect(opaque)]
-#[reflect(Default, Debug)]
+#[reflect(Default, Debug, Clone)]
 pub struct ShaderStorageBuffer {
     /// Optional data used to initialize the buffer.
     pub data: Option<Vec<u8>>,
@@ -114,6 +114,7 @@ impl RenderAsset for GpuShaderStorageBuffer {
 
     fn prepare_asset(
         source_asset: Self::SourceAsset,
+        _: AssetId<Self::SourceAsset>,
         render_device: &mut SystemParamItem<Self::Param>,
     ) -> Result<Self, PrepareAssetError<Self::SourceAsset>> {
         match source_asset.data {

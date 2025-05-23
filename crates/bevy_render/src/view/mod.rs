@@ -1,7 +1,8 @@
 pub mod visibility;
 pub mod window;
 
-use bevy_asset::{load_internal_asset, Handle};
+use bevy_asset::{load_internal_asset, weak_handle, Handle};
+use bevy_diagnostic::FrameCount;
 pub use visibility::*;
 pub use window::*;
 
@@ -10,6 +11,7 @@ use crate::{
         CameraMainTextureUsages, ClearColor, ClearColorConfig, Exposure, ExtractedCamera,
         ManualTextureViews, MipBias, NormalizedRenderTarget, TemporalJitter,
     },
+    experimental::occlusion_culling::OcclusionCulling,
     extract_component::ExtractComponentPlugin,
     prelude::Shader,
     primitives::Frustum,
@@ -17,6 +19,7 @@ use crate::{
     render_phase::ViewRangefinder3d,
     render_resource::{DynamicUniformBuffer, ShaderType, Texture, TextureView},
     renderer::{RenderDevice, RenderQueue},
+    sync_world::MainEntity,
     texture::{
         CachedTexture, ColorAttachment, DepthAttachment, GpuImage, OutputColorAttachment,
         TextureCache,
@@ -30,10 +33,10 @@ use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::prelude::*;
 use bevy_image::BevyDefault as _;
 use bevy_math::{mat3, vec2, vec3, Mat3, Mat4, UVec4, Vec2, Vec3, Vec4, Vec4Swizzles};
+use bevy_platform::collections::{hash_map::Entry, HashMap};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
 use bevy_render_macros::ExtractComponent;
 use bevy_transform::components::GlobalTransform;
-use bevy_utils::{hashbrown::hash_map::Entry, HashMap};
 use core::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering},
@@ -43,7 +46,7 @@ use wgpu::{
     TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
 };
 
-pub const VIEW_TYPE_HANDLE: Handle<Shader> = Handle::weak_from_u128(15421373904451797197);
+pub const VIEW_TYPE_HANDLE: Handle<Shader> = weak_handle!("7234423c-38bb-411c-acec-f67730f6db5b");
 
 /// The matrix that converts from the RGB to the LMS color space.
 ///
@@ -108,9 +111,11 @@ impl Plugin for ViewPlugin {
             .register_type::<Visibility>()
             .register_type::<VisibleEntities>()
             .register_type::<ColorGrading>()
+            .register_type::<OcclusionCulling>()
             // NOTE: windows.is_changed() handles cases where a window was resized
             .add_plugins((
                 ExtractComponentPlugin::<Msaa>::default(),
+                ExtractComponentPlugin::<OcclusionCulling>::default(),
                 VisibilityPlugin,
                 VisibilityRangePlugin,
             ));
@@ -182,10 +187,110 @@ impl Msaa {
     pub fn samples(&self) -> u32 {
         *self as u32
     }
+
+    pub fn from_samples(samples: u32) -> Self {
+        match samples {
+            1 => Msaa::Off,
+            2 => Msaa::Sample2,
+            4 => Msaa::Sample4,
+            8 => Msaa::Sample8,
+            _ => panic!("Unsupported MSAA sample count: {}", samples),
+        }
+    }
 }
 
+/// An identifier for a view that is stable across frames.
+///
+/// We can't use [`Entity`] for this because render world entities aren't
+/// stable, and we can't use just [`MainEntity`] because some main world views
+/// extract to multiple render world views. For example, a directional light
+/// extracts to one render world view per cascade, and a point light extracts to
+/// one render world view per cubemap face. So we pair the main entity with an
+/// *auxiliary entity* and a *subview index*, which *together* uniquely identify
+/// a view in the render world in a way that's stable from frame to frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RetainedViewEntity {
+    /// The main entity that this view corresponds to.
+    pub main_entity: MainEntity,
+
+    /// Another entity associated with the view entity.
+    ///
+    /// This is currently used for shadow cascades. If there are multiple
+    /// cameras, each camera needs to have its own set of shadow cascades. Thus
+    /// the light and subview index aren't themselves enough to uniquely
+    /// identify a shadow cascade: we need the camera that the cascade is
+    /// associated with as well. This entity stores that camera.
+    ///
+    /// If not present, this will be `MainEntity(Entity::PLACEHOLDER)`.
+    pub auxiliary_entity: MainEntity,
+
+    /// The index of the view corresponding to the entity.
+    ///
+    /// For example, for point lights that cast shadows, this is the index of
+    /// the cubemap face (0 through 5 inclusive). For directional lights, this
+    /// is the index of the cascade.
+    pub subview_index: u32,
+}
+
+impl RetainedViewEntity {
+    /// Creates a new [`RetainedViewEntity`] from the given main world entity,
+    /// auxiliary main world entity, and subview index.
+    ///
+    /// See [`RetainedViewEntity::subview_index`] for an explanation of what
+    /// `auxiliary_entity` and `subview_index` are.
+    pub fn new(
+        main_entity: MainEntity,
+        auxiliary_entity: Option<MainEntity>,
+        subview_index: u32,
+    ) -> Self {
+        Self {
+            main_entity,
+            auxiliary_entity: auxiliary_entity.unwrap_or(Entity::PLACEHOLDER.into()),
+            subview_index,
+        }
+    }
+}
+
+/// Describes a camera in the render world.
+///
+/// Each entity in the main world can potentially extract to multiple subviews,
+/// each of which has a [`RetainedViewEntity::subview_index`]. For instance, 3D
+/// cameras extract to both a 3D camera subview with index 0 and a special UI
+/// subview with index 1. Likewise, point lights with shadows extract to 6
+/// subviews, one for each side of the shadow cubemap.
 #[derive(Component)]
 pub struct ExtractedView {
+    /// The entity in the main world corresponding to this render world view.
+    pub retained_view_entity: RetainedViewEntity,
+    /// Typically a right-handed projection matrix, one of either:
+    ///
+    /// Perspective (infinite reverse z)
+    /// ```text
+    /// f = 1 / tan(fov_y_radians / 2)
+    ///
+    /// ⎡ f / aspect  0     0   0 ⎤
+    /// ⎢          0  f     0   0 ⎥
+    /// ⎢          0  0     0  -1 ⎥
+    /// ⎣          0  0  near   0 ⎦
+    /// ```
+    ///
+    /// Orthographic
+    /// ```text
+    /// w = right - left
+    /// h = top - bottom
+    /// d = near - far
+    /// cw = -right - left
+    /// ch = -top - bottom
+    ///
+    /// ⎡  2 / w       0         0  0 ⎤
+    /// ⎢      0   2 / h         0  0 ⎥
+    /// ⎢      0       0     1 / d  0 ⎥
+    /// ⎣ cw / w  ch / h  near / d  1 ⎦
+    /// ```
+    ///
+    /// `clip_from_view[3][3] == 1.0` is the standard way to check if a projection is orthographic
+    ///
+    /// Custom projections are also possible however.
     pub clip_from_view: Mat4,
     pub world_from_view: GlobalTransform,
     // The view-projection matrix. When provided it is used instead of deriving it from
@@ -212,7 +317,7 @@ impl ExtractedView {
 /// `post_saturation` value in [`ColorGradingGlobal`], which is applied after
 /// tonemapping.
 #[derive(Component, Reflect, Debug, Default, Clone)]
-#[reflect(Component, Default, Debug)]
+#[reflect(Component, Default, Debug, Clone)]
 pub struct ColorGrading {
     /// Filmic color grading values applied to the image as a whole (as opposed
     /// to individual sections, like shadows and highlights).
@@ -241,7 +346,7 @@ pub struct ColorGrading {
 /// Filmic color grading values applied to the image as a whole (as opposed to
 /// individual sections, like shadows and highlights).
 #[derive(Clone, Debug, Reflect)]
-#[reflect(Default)]
+#[reflect(Default, Clone)]
 pub struct ColorGradingGlobal {
     /// Exposure value (EV) offset, measured in stops.
     pub exposure: f32,
@@ -307,6 +412,7 @@ pub struct ColorGradingUniform {
 /// A section of color grading values that can be selectively applied to
 /// shadows, midtones, and highlights.
 #[derive(Reflect, Debug, Copy, Clone, PartialEq)]
+#[reflect(Clone, PartialEq)]
 pub struct ColorGradingSection {
     /// Values below 1.0 desaturate, with a value of 0.0 resulting in a grayscale image
     /// with luminance defined by ITU-R BT.709.
@@ -423,15 +529,48 @@ pub struct ViewUniform {
     pub world_from_clip: Mat4,
     pub world_from_view: Mat4,
     pub view_from_world: Mat4,
+    /// Typically a right-handed projection matrix, one of either:
+    ///
+    /// Perspective (infinite reverse z)
+    /// ```text
+    /// f = 1 / tan(fov_y_radians / 2)
+    ///
+    /// ⎡ f / aspect  0     0   0 ⎤
+    /// ⎢          0  f     0   0 ⎥
+    /// ⎢          0  0     0  -1 ⎥
+    /// ⎣          0  0  near   0 ⎦
+    /// ```
+    ///
+    /// Orthographic
+    /// ```text
+    /// w = right - left
+    /// h = top - bottom
+    /// d = near - far
+    /// cw = -right - left
+    /// ch = -top - bottom
+    ///
+    /// ⎡  2 / w       0         0  0 ⎤
+    /// ⎢      0   2 / h         0  0 ⎥
+    /// ⎢      0       0     1 / d  0 ⎥
+    /// ⎣ cw / w  ch / h  near / d  1 ⎦
+    /// ```
+    ///
+    /// `clip_from_view[3][3] == 1.0` is the standard way to check if a projection is orthographic
+    ///
+    /// Custom projections are also possible however.
     pub clip_from_view: Mat4,
     pub view_from_clip: Mat4,
     pub world_position: Vec3,
     pub exposure: f32,
     // viewport(x_origin, y_origin, width, height)
     pub viewport: Vec4,
+    /// 6 world-space half spaces (normal: vec3, distance: f32) ordered left, right, top, bottom, near, far.
+    /// The normal vectors point towards the interior of the frustum.
+    /// A half space contains `p` if `normal.dot(p) + distance > 0.`
     pub frustum: [Vec4; 6],
     pub color_grading: ColorGradingUniform,
     pub mip_bias: f32,
+    pub frame_count: u32,
 }
 
 #[derive(Resource)]
@@ -477,7 +616,9 @@ pub struct ViewTargetAttachments(HashMap<NormalizedRenderTarget, OutputColorAtta
 
 pub struct PostProcessWrite<'a> {
     pub source: &'a TextureView,
+    pub source_texture: &'a Texture,
     pub destination: &'a TextureView,
+    pub destination_texture: &'a Texture,
 }
 
 impl From<ColorGrading> for ColorGradingUniform {
@@ -559,10 +700,24 @@ impl From<ColorGrading> for ColorGradingUniform {
     }
 }
 
-#[derive(Component)]
-pub struct GpuCulling;
+/// Add this component to a camera to disable *indirect mode*.
+///
+/// Indirect mode, automatically enabled on supported hardware, allows Bevy to
+/// offload transform and cull operations to the GPU, reducing CPU overhead.
+/// Doing this, however, reduces the amount of control that your app has over
+/// instancing decisions. In certain circumstances, you may want to disable
+/// indirect drawing so that your app can manually instance meshes as it sees
+/// fit. See the `custom_shader_instancing` example.
+///
+/// The vast majority of applications will not need to use this component, as it
+/// generally reduces rendering performance.
+///
+/// Note: This component should only be added when initially spawning a camera. Adding
+/// or removing after spawn can result in unspecified behavior.
+#[derive(Component, Default)]
+pub struct NoIndirectDrawing;
 
-#[derive(Component)]
+#[derive(Component, Default)]
 pub struct NoCpuCulling;
 
 impl ViewTarget {
@@ -694,13 +849,17 @@ impl ViewTarget {
             self.main_textures.b.mark_as_cleared();
             PostProcessWrite {
                 source: &self.main_textures.a.texture.default_view,
+                source_texture: &self.main_textures.a.texture.texture,
                 destination: &self.main_textures.b.texture.default_view,
+                destination_texture: &self.main_textures.b.texture.texture,
             }
         } else {
             self.main_textures.a.mark_as_cleared();
             PostProcessWrite {
                 source: &self.main_textures.b.texture.default_view,
+                source_texture: &self.main_textures.b.texture.texture,
                 destination: &self.main_textures.a.texture.default_view,
+                destination_texture: &self.main_textures.a.texture.texture,
             }
         }
     }
@@ -742,6 +901,7 @@ pub fn prepare_view_uniforms(
         Option<&TemporalJitter>,
         Option<&MipBias>,
     )>,
+    frame_count: Res<FrameCount>,
 ) {
     let view_iter = views.iter();
     let view_count = view_iter.len();
@@ -795,6 +955,7 @@ pub fn prepare_view_uniforms(
                 frustum,
                 color_grading: extracted_view.color_grading.clone().into(),
                 mip_bias: mip_bias.unwrap_or(&MipBias(0.0)).0,
+                frame_count: frame_count.0,
             }),
         };
 
@@ -862,7 +1023,7 @@ pub fn prepare_view_targets(
     )>,
     view_target_attachments: Res<ViewTargetAttachments>,
 ) {
-    let mut textures = HashMap::default();
+    let mut textures = <HashMap<_, _>>::default();
     for (entity, camera, view, texture_usage, msaa) in cameras.iter() {
         let (Some(target_size), Some(target)) = (camera.physical_target_size, &camera.target)
         else {
@@ -892,7 +1053,7 @@ pub fn prepare_view_targets(
         };
 
         let (a, b, sampled, main_texture) = textures
-            .entry((camera.target.clone(), view.hdr, msaa))
+            .entry((camera.target.clone(), texture_usage.0, view.hdr, msaa))
             .or_insert_with(|| {
                 let descriptor = TextureDescriptor {
                     label: None,

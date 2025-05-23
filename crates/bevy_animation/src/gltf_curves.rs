@@ -5,8 +5,8 @@ use bevy_math::{
     vec4, Quat, Vec4, VectorSpace,
 };
 use bevy_reflect::Reflect;
-use derive_more::derive::{Display, Error, From};
 use either::Either;
+use thiserror::Error;
 
 /// A keyframe-defined curve that "interpolates" by stepping at `t = 1.0` to the next keyframe.
 #[derive(Debug, Clone, Reflect)]
@@ -111,6 +111,7 @@ impl<T> CubicKeyframeCurve<T> {
 /// A keyframe-defined curve that uses cubic spline interpolation, special-cased for quaternions
 /// since it uses `Vec4` internally.
 #[derive(Debug, Clone, Reflect)]
+#[reflect(Clone)]
 pub struct CubicRotationCurve {
     // Note: The sample width here should be 3.
     core: ChunkedUnevenCore<Vec4>,
@@ -319,11 +320,11 @@ where
 }
 
 /// An error indicating that a multisampling keyframe curve could not be constructed.
-#[derive(Debug, Error, Display, From)]
-#[display("unable to construct a curve using this data")]
+#[derive(Debug, Error)]
+#[error("unable to construct a curve using this data")]
 pub enum WideKeyframeCurveError {
     /// The number of given values was not divisible by a multiple of the number of keyframes.
-    #[display("number of values ({values_given}) is not divisible by {divisor}")]
+    #[error("number of values ({values_given}) is not divisible by {divisor}")]
     LengthMismatch {
         /// The number of values given.
         values_given: usize,
@@ -331,7 +332,8 @@ pub enum WideKeyframeCurveError {
         divisor: usize,
     },
     /// An error was returned by the internal core constructor.
-    CoreError(ChunkedUnevenCoreError),
+    #[error(transparent)]
+    CoreError(#[from] ChunkedUnevenCoreError),
 }
 
 impl<T> WideCubicKeyframeCurve<T> {
@@ -371,8 +373,9 @@ impl<T> WideCubicKeyframeCurve<T> {
 /// recommended to use its implementation of the [`IterableCurve`] trait, which allows iterating
 /// directly over information derived from the curve without allocating.
 ///
-/// [`MorphWeights`]: bevy_render::prelude::MorphWeights
+/// [`MorphWeights`]: bevy_mesh::morph::MorphWeights
 #[derive(Debug, Clone, Reflect)]
+#[reflect(Clone)]
 pub enum WeightsCurve {
     /// A curve which takes a constant value over its domain. Notably, this is how animations with
     /// only a single keyframe are interpreted.

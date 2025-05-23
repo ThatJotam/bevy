@@ -13,13 +13,15 @@ use bevy_ecs::{
     query::{Changed, With},
     reflect::ReflectComponent,
     removal_detection::RemovedComponents,
-    schedule::IntoSystemConfigs as _,
-    system::{Query, Res, ResMut, Resource},
+    resource::Resource,
+    schedule::IntoScheduleConfigs as _,
+    system::{Local, Query, Res, ResMut},
 };
 use bevy_math::{vec4, FloatOrd, Vec4};
+use bevy_platform::collections::HashMap;
 use bevy_reflect::Reflect;
 use bevy_transform::components::GlobalTransform;
-use bevy_utils::{prelude::default, HashMap};
+use bevy_utils::{prelude::default, Parallel};
 use nonmax::NonMaxU16;
 use wgpu::{BufferBindingType, BufferUsages};
 
@@ -27,7 +29,6 @@ use super::{check_visibility, VisibilitySystems};
 use crate::sync_world::{MainEntity, MainEntityHashMap};
 use crate::{
     camera::Camera,
-    mesh::Mesh3d,
     primitives::Aabb,
     render_resource::BufferVec,
     renderer::{RenderDevice, RenderQueue},
@@ -59,7 +60,7 @@ impl Plugin for VisibilityRangePlugin {
                 PostUpdate,
                 check_visibility_ranges
                     .in_set(VisibilitySystems::CheckVisibility)
-                    .before(check_visibility::<With<Mesh3d>>),
+                    .before(check_visibility),
             );
 
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -113,7 +114,7 @@ impl Plugin for VisibilityRangePlugin {
 /// `start_margin` of the next lower LOD; this is important for the crossfade
 /// effect to function properly.
 #[derive(Component, Clone, PartialEq, Default, Reflect)]
-#[reflect(Component, PartialEq, Hash)]
+#[reflect(Component, PartialEq, Hash, Clone)]
 pub struct VisibilityRange {
     /// The range of distances, in world units, between which this entity will
     /// smoothly fade into view as the camera zooms out.
@@ -384,7 +385,8 @@ impl VisibleEntityRanges {
 pub fn check_visibility_ranges(
     mut visible_entity_ranges: ResMut<VisibleEntityRanges>,
     view_query: Query<(Entity, &GlobalTransform), With<Camera>>,
-    mut entity_query: Query<(Entity, &GlobalTransform, Option<&Aabb>, &VisibilityRange)>,
+    mut par_local: Local<Parallel<Vec<(Entity, u32)>>>,
+    entity_query: Query<(Entity, &GlobalTransform, Option<&Aabb>, &VisibilityRange)>,
 ) {
     visible_entity_ranges.clear();
 
@@ -403,30 +405,34 @@ pub fn check_visibility_ranges(
 
     // Check each entity/view pair. Only consider entities with
     // [`VisibilityRange`] components.
-    for (entity, entity_transform, maybe_model_aabb, visibility_range) in entity_query.iter_mut() {
-        let mut visibility = 0;
-        for (view_index, &(_, view_position)) in views.iter().enumerate() {
-            // If instructed to use the AABB and the model has one, use its
-            // center as the model position. Otherwise, use the model's
-            // translation.
-            let model_position = match (visibility_range.use_aabb, maybe_model_aabb) {
-                (true, Some(model_aabb)) => entity_transform
-                    .affine()
-                    .transform_point3a(model_aabb.center),
-                _ => entity_transform.translation_vec3a(),
-            };
+    entity_query.par_iter().for_each(
+        |(entity, entity_transform, maybe_model_aabb, visibility_range)| {
+            let mut visibility = 0;
+            for (view_index, &(_, view_position)) in views.iter().enumerate() {
+                // If instructed to use the AABB and the model has one, use its
+                // center as the model position. Otherwise, use the model's
+                // translation.
+                let model_position = match (visibility_range.use_aabb, maybe_model_aabb) {
+                    (true, Some(model_aabb)) => entity_transform
+                        .affine()
+                        .transform_point3a(model_aabb.center),
+                    _ => entity_transform.translation_vec3a(),
+                };
 
-            if visibility_range.is_visible_at_all((view_position - model_position).length()) {
-                visibility |= 1 << view_index;
+                if visibility_range.is_visible_at_all((view_position - model_position).length()) {
+                    visibility |= 1 << view_index;
+                }
             }
-        }
 
-        // Invisible entities have no entry at all in the hash map. This speeds
-        // up checks slightly in this common case.
-        if visibility != 0 {
-            visible_entity_ranges.entities.insert(entity, visibility);
-        }
-    }
+            // Invisible entities have no entry at all in the hash map. This speeds
+            // up checks slightly in this common case.
+            if visibility != 0 {
+                par_local.borrow_local_mut().push((entity, visibility));
+            }
+        },
+    );
+
+    visible_entity_ranges.entities.extend(par_local.drain());
 }
 
 /// Extracts all [`VisibilityRange`] components from the main world to the

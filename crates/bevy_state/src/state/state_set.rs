@@ -1,9 +1,9 @@
 use bevy_ecs::{
     event::{EventReader, EventWriter},
-    schedule::{IntoSystemConfigs, IntoSystemSetConfigs, Schedule},
+    schedule::{IntoScheduleConfigs, Schedule},
     system::{Commands, IntoSystem, Res, ResMut},
 };
-use bevy_utils::all_tuples;
+use variadics_please::all_tuples;
 
 use self::sealed::StateSetSealed;
 
