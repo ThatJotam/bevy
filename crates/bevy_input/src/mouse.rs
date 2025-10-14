@@ -4,7 +4,7 @@ use crate::{ButtonInput, ButtonState};
 use bevy_ecs::{
     change_detection::DetectChangesMut,
     entity::Entity,
-    event::{Event, EventReader},
+    message::{Message, MessageReader},
     resource::Resource,
     system::ResMut,
 };
@@ -27,7 +27,7 @@ use winit::event::DeviceId;
 ///
 /// The event is read inside of the [`mouse_button_input_system`]
 /// to update the [`ButtonInput<MouseButton>`] resource.
-#[derive(Event, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     feature = "bevy_reflect",
     derive(Reflect),
@@ -94,7 +94,7 @@ pub enum MouseButton {
 /// However, the event data does not make it possible to distinguish which device it is referring to.
 ///
 /// [`DeviceEvent::MouseMotion`]: https://docs.rs/winit/latest/winit/event/enum.DeviceEvent.html#variant.MouseMotion
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "bevy_reflect",
     derive(Reflect),
@@ -145,7 +145,7 @@ pub enum MouseScrollUnit {
 /// A mouse wheel event.
 ///
 /// This event is the translated version of the `WindowEvent::MouseWheel` from the `winit` crate.
-#[derive(Event, Debug, Clone, Copy, PartialEq)]
+#[derive(Message, Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
     feature = "bevy_reflect",
     derive(Reflect),
@@ -175,7 +175,7 @@ pub struct MouseWheel {
 /// the latter has convenient functions like [`ButtonInput::pressed`], [`ButtonInput::just_pressed`] and [`ButtonInput::just_released`].
 pub fn mouse_button_input_system(
     mut mouse_button_input: ResMut<ButtonInput<MouseButton>>,
-    mut mouse_button_input_events: EventReader<MouseButtonInput>,
+    mut mouse_button_input_events: MessageReader<MouseButtonInput>,
 ) {
     mouse_button_input.bypass_change_detection().clear();
     for event in mouse_button_input_events.read() {
@@ -244,7 +244,7 @@ impl Default for AccumulatedMouseScroll {
 /// Updates the [`AccumulatedMouseMotion`] resource using the [`MouseMotion`] event.
 /// The value of [`AccumulatedMouseMotion`] is reset to zero every frame
 pub fn accumulate_mouse_motion_system(
-    mut mouse_motion_event: EventReader<MouseMotion>,
+    mut mouse_motion_event: MessageReader<MouseMotion>,
     mut accumulated_mouse_motion: ResMut<AccumulatedMouseMotion>,
 ) {
     let mut delta = Vec2::ZERO;
@@ -257,7 +257,7 @@ pub fn accumulate_mouse_motion_system(
 /// Updates the [`AccumulatedMouseScroll`] resource using the [`MouseWheel`] event.
 /// The value of [`AccumulatedMouseScroll`] is reset to zero every frame
 pub fn accumulate_mouse_scroll_system(
-    mut mouse_scroll_event: EventReader<MouseWheel>,
+    mut mouse_scroll_event: MessageReader<MouseWheel>,
     mut accumulated_mouse_scroll: ResMut<AccumulatedMouseScroll>,
 ) {
     let mut delta = Vec2::ZERO;
